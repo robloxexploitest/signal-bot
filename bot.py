@@ -1,8 +1,3 @@
-"""
-TradeLocker Signal Bot (single-check version for GitHub Actions).
-Checks once, sends a Telegram alert if there is a fresh BUY/SELL signal, then exits.
-Alerts only. It does NOT place trades.
-"""
 import os
 import time
 
@@ -10,7 +5,7 @@ import pandas as pd
 import requests
 from tradelocker import TLAPI
 
-TL_ENV = os.getenv("TL_ENV", "https://demo.tradelocker.com")  # live: https://live.tradelocker.com
+TL_ENV = os.getenv("TL_ENV", "https://demo.tradelocker.com")
 TL_EMAIL = os.environ["TL_EMAIL"]
 TL_PASSWORD = os.environ["TL_PASSWORD"]
 TL_SERVER = os.environ["TL_SERVER"]
@@ -54,19 +49,18 @@ def main():
         instrument_id=iid, resolution=TIMEFRAME, start_timestamp=0, end_timestamp=0, lookback_period=LOOKBACK
     )
 
-    df = df.iloc[:-1].copy()  # drop the still-forming candle
+    df = df.iloc[:-1].copy()
     df["fast"] = df["c"].ewm(span=FAST, adjust=False).mean()
     df["slow"] = df["c"].ewm(span=SLOW, adjust=False).mean()
     df["rsi"] = rsi(df["c"], RSI_LEN)
     df["atr"] = atr(df, ATR_LEN)
     prev, last = df.iloc[-2], df.iloc[-1]
 
-    # Only alert if the signal candle closed recently (avoids repeat alerts)
+    tf = TF_SECONDS.get(TIMEFRAME, 900)
     t = float(last["t"])
     t = t / 1000 if t > 1e12 else t
-    closed_at = t + TF_SECONDS.get(TIMEFRAME, 900)
-    if time.time() - closed_at > 1.5 * TF_SECONDS.get(TIMEFRAME, 900):
-        print("No fresh candle to check. Done.")
+    if time.time() - (t + tf) > 1.5 * tf:
+        send(f"No signal found for {SYMBOL} ({TIMEFRAME}). No new candles, market may be closed.")
         return
 
     price, a, r = last["c"], last["atr"], last["rsi"]
@@ -78,7 +72,7 @@ def main():
     elif down:
         send(f"SELL {SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nSL: {price + SL_ATR * a:.5f}\nTP: {price - TP_ATR * a:.5f}\nRSI: {r:.1f}")
     else:
-        print(f"No signal. Price {price:.5f}, RSI {r:.1f}")
+        send(f"No signal found for {SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nRSI: {r:.1f}")
 
 
 if __name__ == "__main__":
