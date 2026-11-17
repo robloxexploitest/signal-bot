@@ -2,7 +2,7 @@ name: Signal Bot
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
         env:
           TL_ENV: https://live.tradelocker.com
           SYMBOL: NAS100
-          TIMEFRAME: 15m
+          TIMEFRAME: 5m
           TL_EMAIL: ${{ secrets.TL_EMAIL }}
           TL_PASSWORD: ${{ secrets.TL_PASSWORD }}
           TL_SERVER: ${{ secrets.TL_SERVER }}
