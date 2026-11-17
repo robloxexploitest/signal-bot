@@ -16,6 +16,9 @@ jobs:
       - run: pip install tradelocker pandas requests
       - run: python bot.py
         env:
+          TL_ENV: https://live.tradelocker.com
+          SYMBOL: NAS100
+          TIMEFRAME: 15m
           TL_EMAIL: ${{ secrets.TL_EMAIL }}
           TL_PASSWORD: ${{ secrets.TL_PASSWORD }}
           TL_SERVER: ${{ secrets.TL_SERVER }}
