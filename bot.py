@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timezone
 
 import pandas as pd
 import requests
@@ -56,23 +57,28 @@ def main():
     df["atr"] = atr(df, ATR_LEN)
     prev, last = df.iloc[-2], df.iloc[-1]
 
-    tf = TF_SECONDS.get(TIMEFRAME, 900)
+    tf = TF_SECONDS.get(TIMEFRAME, 300)
     t = float(last["t"])
     t = t / 1000 if t > 1e12 else t
-    if time.time() - (t + tf) > 1.5 * tf:
-        send(f"No signal found for {SYMBOL} ({TIMEFRAME}). No new candles, market may be closed.")
-        return
+    age = time.time() - (t + tf)  # seconds since the last closed candle closed
+    fresh = age <= tf
 
     price, a, r = last["c"], last["atr"], last["rsi"]
-    up = prev["fast"] <= prev["slow"] and last["fast"] > last["slow"] and r < 70
-    down = prev["fast"] >= prev["slow"] and last["fast"] < last["slow"] and r > 30
+    up = fresh and prev["fast"] <= prev["slow"] and last["fast"] > last["slow"] and r < 70
+    down = fresh and prev["fast"] >= prev["slow"] and last["fast"] < last["slow"] and r > 30
 
     if up:
         send(f"BUY {SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nSL: {price - SL_ATR * a:.5f}\nTP: {price + TP_ATR * a:.5f}\nRSI: {r:.1f}")
     elif down:
         send(f"SELL {SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nSL: {price + SL_ATR * a:.5f}\nTP: {price - TP_ATR * a:.5f}\nRSI: {r:.1f}")
     else:
-        send(f"No signal found for {SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nRSI: {r:.1f}")
+        print(f"No signal. Price {price:.5f}, RSI {r:.1f}")
+
+    # Status message every 2 hours (even UTC hours, first 5 minutes)
+    now = datetime.now(timezone.utc)
+    if now.hour % 2 == 0 and now.minute < 5:
+        market = "open" if age <= 2 * tf else "closed or no new candles"
+        send(f"Bot status: running\n{SYMBOL} ({TIMEFRAME})\nPrice: {price:.5f}\nRSI: {r:.1f}\nMarket: {market}")
 
 
 if __name__ == "__main__":
