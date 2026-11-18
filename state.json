@@ -1,3 +1,13 @@
 {
-  "trade": null
+  "trade": {
+    "side": "buy",
+    "entry": 27215.16,
+    "sl": 27161.663630126975,
+    "tp": 27316.84273974605,
+    "lots": 0.01,
+    "opened_at": 1795010153.5951514,
+    "balance_before": 4.52,
+    "position_id": "72057594052765693",
+    "last_pl": null
+  }
 }
