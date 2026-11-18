@@ -16,7 +16,7 @@ jobs:
         env:
           LIVE_CONFIRM: I_ACCEPT_THE_RISK
           TL_ENV: https://live.tradelocker.com
-          SYMBOL: BTCUSD
+          SYMBOL: NAS100
           TIMEFRAME: 5m
           LOTS: "0.01"
           TL_EMAIL: ${{ secrets.TL_EMAIL }}
