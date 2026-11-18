@@ -1,0 +1,26 @@
+name: Live Trader
+
+on:
+  workflow_dispatch:
+
+jobs:
+  trade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install tradelocker pandas requests
+      - run: python livebot.py
+        env:
+          LIVE_CONFIRM: I_ACCEPT_THE_RISK
+          TL_ENV: https://live.tradelocker.com
+          SYMBOL: BTCUSD
+          TIMEFRAME: 5m
+          LOTS: "0.01"
+          TL_EMAIL: ${{ secrets.TL_EMAIL }}
+          TL_PASSWORD: ${{ secrets.TL_PASSWORD }}
+          TL_SERVER: ${{ secrets.TL_SERVER }}
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
