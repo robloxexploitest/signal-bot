@@ -25,9 +25,13 @@ jobs:
           TL_ENV: https://live.tradelocker.com
           SYMBOL: NAS100
           TIMEFRAME: 15m
-          ACCOUNT_SIZE: "200"
           RISK_PCT: "1"
+          TP_ATR: "2.0"
           DAILY_LOSS_PCT: "3"
+          GIVEBACK_PCT: "30"
+          MAX_LOSS_STREAK: "3"
+          START_UTC: "14:45"
+          END_UTC: "20:30"
           POINT_VALUE: "1.0"
           MAX_LOT: "0.05"
           TL_EMAIL: ${{ secrets.TL_EMAIL }}
