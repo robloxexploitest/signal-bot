@@ -3,5 +3,7 @@
   "last_candle": 0,
   "day": "2026-11-23",
   "day_start": 2.26,
-  "limit_sent": false
+  "limit_sent": false,
+  "streak": 0,
+  "peak": 0.0
 }
