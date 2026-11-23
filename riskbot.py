@@ -21,15 +21,19 @@ TIMEFRAME = os.getenv("TIMEFRAME", "15m")
 TG_TOKEN = os.environ["TG_TOKEN"]
 TG_CHAT_ID = os.environ["TG_CHAT_ID"]
 
-ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "200"))  # fallback only
 RISK_PCT = float(os.getenv("RISK_PCT", "1")) / 100
 DAILY_LOSS_PCT = float(os.getenv("DAILY_LOSS_PCT", "3")) / 100
-POINT_VALUE = float(os.getenv("POINT_VALUE", "1.0"))  # money per 1 price point per 1 lot
+GIVEBACK = float(os.getenv("GIVEBACK_PCT", "30")) / 100
+MAX_STREAK = int(os.getenv("MAX_LOSS_STREAK", "3"))
+POINT_VALUE = float(os.getenv("POINT_VALUE", "1.0"))  # money per price point per 1 lot
 MIN_LOT, LOT_STEP = 0.01, 0.01
 MAX_LOT = float(os.getenv("MAX_LOT", "0.05"))
+START_MIN = int(os.getenv("START_UTC", "14:45").split(":")[0]) * 60 + int(os.getenv("START_UTC", "14:45").split(":")[1])
+END_MIN = int(os.getenv("END_UTC", "20:30").split(":")[0]) * 60 + int(os.getenv("END_UTC", "20:30").split(":")[1])
 
 FAST, SLOW, TREND, RSI_LEN, ATR_LEN = 9, 21, 200, 14, 14
-SL_ATR, TP_ATR = 1.5, 3.0
+SL_ATR = 1.5
+TP_ATR = float(os.getenv("TP_ATR", "2.0"))
 TF_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1D": 86400}
 TF = TF_SECONDS.get(TIMEFRAME, 900)
 STATE_FILE = "riskstate.json"
@@ -82,6 +86,8 @@ def load_state():
         s = {}
     s.setdefault("trade", None)
     s.setdefault("last_candle", 0)
+    s.setdefault("streak", 0)
+    s.setdefault("peak", 0.0)
     return s
 
 
@@ -115,14 +121,34 @@ def realized_pl(tl, trade):
     return trade.get("last_pl"), after
 
 
+def record_result(state, pl, bal):
+    if pl is not None:
+        state["streak"] = state.get("streak", 0) + 1 if pl < 0 else 0
+    ds = state.get("day_start")
+    if bal is not None and ds:
+        state["peak"] = max(state.get("peak", 0.0), bal - ds)
+
+
+def halt_reason(state, balance):
+    if state.get("streak", 0) >= MAX_STREAK:
+        return f"{MAX_STREAK} losses in a row"
+    ds = state.get("day_start")
+    if balance and ds:
+        day_pl = balance - ds
+        if day_pl <= -ds * DAILY_LOSS_PCT:
+            return f"daily loss limit ({DAILY_LOSS_PCT * 100:.0f}%)"
+        peak = state.get("peak", 0.0)
+        if peak > 0 and day_pl <= peak * (1 - GIVEBACK):
+            return f"gave back {GIVEBACK * 100:.0f}% of today's peak profit"
+    return None
+
+
 def size_trade(balance, stop_dist, ratio):
-    # ratio > 1 means the market is moving more than usual: shrink the risk (down to half)
     factor = max(0.5, min(1.0, 1.0 / ratio)) if ratio > 0 else 1.0
     risk_money = balance * RISK_PCT * factor
     raw = risk_money / (stop_dist * POINT_VALUE)
     lots = math.floor(raw / LOT_STEP + 1e-9) * LOT_STEP
-    lots = round(min(lots, MAX_LOT), 2)
-    return lots, risk_money, factor
+    return round(min(lots, MAX_LOT), 2), risk_money, factor
 
 
 def send_incoming(side, price, sl, tp, lots, risk_money, base, factor, r, dp):
@@ -191,14 +217,22 @@ def run(state):
         send(f"⚠️ <b>Could not read positions</b>\n<code>{esc(e)}</code>\nNo trades this run.")
         return
 
+    balance = get_balance(tl)
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    if state.get("day") != today:
+        state.update({"day": today, "day_start": balance, "peak": 0.0, "streak": 0, "halt_sent": False})
+
     # A trade closed by its stop or target?
     trade = state.get("trade")
     if trade and not mine:
         time.sleep(2)
         pl, bal = realized_pl(tl, trade)
         send_closed(trade, pl, bal)
+        record_result(state, pl, bal)
         state["trade"] = None
         trade = None
+        balance = bal if bal is not None else balance
     elif trade and mine:
         try:
             v = mine[0].get("unrealizedPl")
@@ -207,16 +241,22 @@ def run(state):
         except Exception:
             pass
 
-    # Daily loss limit
-    balance = get_balance(tl)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if state.get("day") != today:
-        state.update({"day": today, "day_start": balance, "limit_sent": False})
-    ds = state.get("day_start")
-    if balance and ds and balance <= ds * (1 - DAILY_LOSS_PCT):
-        if not state.get("limit_sent"):
-            state["limit_sent"] = True
-            send(f"🚫 <b>Daily loss limit hit</b>\nDown {DAILY_LOSS_PCT * 100:.0f}% today. No new trades until tomorrow (UTC).")
+    # Stop rules
+    why = halt_reason(state, balance)
+    if why:
+        if not state.get("halt_sent"):
+            state["halt_sent"] = True
+            send(f"🚫 <b>Trading paused for today</b>\nReason: <code>{why}</code>\nResumes tomorrow (UTC).")
+        return
+
+    if balance is None:
+        send("⚠️ Could not read your balance. No trades this run.")
+        return
+
+    # Trading hours
+    minute = now.hour * 60 + now.minute
+    if not (START_MIN <= minute <= END_MIN):
+        print("Outside trading hours.")
         return
 
     # Signal
@@ -235,15 +275,16 @@ def run(state):
         print("Already in a trade in this direction. Skipping.")
         return
 
-    # Position size from the 1% rule
+    # 1% rule sizing
     stop_dist = SL_ATR * a
-    base = balance if balance else ACCOUNT_SIZE
-    lots, risk_money, factor = size_trade(base, stop_dist, ratio)
+    lots, risk_money, factor = size_trade(balance, stop_dist, ratio)
     if lots < MIN_LOT:
         min_risk = MIN_LOT * stop_dist * POINT_VALUE
-        send(f"⏭ <b>Signal skipped</b> · {side.upper()} {SYMBOL}\nThe smallest size ({MIN_LOT} lots) would risk "
-             f"<code>${min_risk:,.2f} ({min_risk / base * 100:.2f}%)</code>, more than the "
-             f"<code>${risk_money:,.2f}</code> allowed right now.")
+        need = min_risk / RISK_PCT
+        send(f"⏭ <b>Signal skipped</b> · {side.upper()} {SYMBOL}\n"
+             f"The smallest size ({MIN_LOT} lots) would risk <code>${min_risk:,.2f} "
+             f"({min_risk / balance * 100:.0f}% of your balance)</code>.\n"
+             f"At 1% risk you'd need about <code>${need:,.0f}</code> in the account.")
         return
 
     # Close the opposite trade first
@@ -257,16 +298,18 @@ def run(state):
         if trade:
             pl, bal = realized_pl(tl, trade)
             send_closed(trade, pl, bal, reason="Opposite signal")
+            record_result(state, pl, bal)
             state["trade"] = None
             balance = bal if bal is not None else balance
+            if halt_reason(state, balance):
+                return
         else:
             send("🔁 Closed an open position (opposite signal).")
 
     dp = 2 if price > 100 else 5
     sl = price - stop_dist if side == "buy" else price + stop_dist
     tp = price + TP_ATR * a if side == "buy" else price - TP_ATR * a
-    balance_before = balance if balance is not None else get_balance(tl)
-    send_incoming(side, price, sl, tp, lots, risk_money, base, factor, r, dp)
+    send_incoming(side, price, sl, tp, lots, risk_money, balance, factor, r, dp)
 
     try:
         order_id = tl.create_order(
@@ -283,7 +326,7 @@ def run(state):
 
     state["trade"] = {
         "side": side, "entry": price, "sl": sl, "tp": tp, "lots": lots,
-        "opened_at": time.time(), "balance_before": balance_before, "last_pl": None,
+        "opened_at": time.time(), "balance_before": balance, "last_pl": None,
     }
 
 
