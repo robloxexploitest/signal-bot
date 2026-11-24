@@ -6,5 +6,5 @@
   "limit_sent": false,
   "streak": 0,
   "peak": 0.0,
-  "halt_sent": false
+  "halt_sent": true
 }
